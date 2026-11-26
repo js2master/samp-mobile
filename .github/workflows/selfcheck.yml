@@ -1,30 +1,29 @@
-name: 自检
+name: Tự kiểm tra
 
-# 运行标题带上被检的分支名。否则 Actions 列表里一排都叫「自检」，
-# 事后分不清哪次跑的是哪个分支。
-run-name: 自检 ${{ inputs.ref || github.ref_name }}
+# Gắn tên nhánh được kiểm tra vào tiêu đề lần chạy để dễ phân biệt trong Actions.
+run-name: Tự kiểm tra ${{ inputs.ref || github.ref_name }}
 
-# 这个文件只存在于 fork（a2664955622/samp-mobile）的 main 分支，用于在云端
-# 复现本地自检，不进入任何向上游提交的 PR 分支。
+# Tệp workflow này chỉ nằm trên nhánh main của fork a2664955622/samp-mobile,
+# dùng để tái hiện quá trình tự kiểm tra trên CI; không đưa vào các nhánh PR lên upstream.
 #
-# 用法：Actions -> 自检 -> Run workflow -> 在 ref 里填要测的分支名，
-# 例如 feat/cef-threading。也可以命令行：
+# Cách dùng: Actions -> Tự kiểm tra -> Run workflow -> nhập tên nhánh hoặc commit SHA
+# vào trường ref, ví dụ feat/cef-threading. Có thể chạy bằng lệnh:
 #   gh workflow run selfcheck.yml --repo a2664955622/samp-mobile \
 #       --ref main -f ref=feat/cef-threading
 #
-# 为什么要有 ref 参数：GitHub 的 push 事件只会在「被推送的那个分支」上找
-# workflow 文件，本文件不在 feat/* 上，所以那些分支的 push 不会自动触发。
-# workflow_dispatch 则是从 main 读定义、按 ref 取代码，正好符合需求。
+# Lý do có tham số ref: sự kiện push chỉ tìm workflow trên chính nhánh được đẩy lên.
+# Tệp này không có trên feat/* nên push ở các nhánh đó không tự kích hoạt workflow.
+# workflow_dispatch đọc định nghĩa từ main và lấy mã nguồn theo ref được chọn.
 #
-# 两条约束，来自上游 PR #1 被否决的教训：
-#   1. 不改 app/build.gradle、不改 tools/selfcheck.py —— 只调用它们。
-#   2. 不静默跳过。任何一步没跑成，宁可红灯也不让 CI 假绿。
+# Hai nguyên tắc:
+#   1. Không sửa app/build.gradle hoặc tools/selfcheck.py — chỉ gọi chúng.
+#   2. Không âm thầm bỏ qua lỗi. Bất kỳ bước nào thất bại thì CI phải báo lỗi.
 
 on:
   workflow_dispatch:
     inputs:
       ref:
-        description: '要自检的分支名或 commit sha'
+        description: 'Tên nhánh hoặc commit SHA cần tự kiểm tra'
         required: true
         default: 'main'
   push:
@@ -39,7 +38,7 @@ concurrency:
 
 jobs:
   static:
-    name: 静态自检（不编译）
+    name: Tự kiểm tra tĩnh (không biên dịch)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -47,7 +46,7 @@ jobs:
         with:
           ref: ${{ github.event.inputs.ref || github.ref }}
 
-      - name: 打印实际检出的提交
+      - name: In thông tin commit được checkout
         run: |
           echo "ref=${{ github.event.inputs.ref || github.ref }}"
           echo "sha=$(git rev-parse HEAD)"
@@ -57,10 +56,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      # 纯净检出下预期 27 passed / 0 failed / 1 warning
-      # （warning 是 APK 未构建，属于编译前的正常状态）。
-      # GTA:SA 专有资产不在仓库里，脚本本身已按此设计，无需 --require-gtasa。
-      - name: 仓库自检
+      # Khi checkout sạch, kết quả dự kiến là 27 passed / 0 failed / 1 cảnh báo.
+      # Cảnh báo APK chưa được build là bình thường ở giai đoạn trước khi biên dịch.
+      # Tài sản riêng của GTA:SA không có trong kho mã; không cần --require-gtasa.
+      - name: Tự kiểm tra kho mã
         run: python tools/selfcheck.py
 
       - uses: actions/setup-java@v4
@@ -68,33 +67,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 不用 android-actions/setup-android：它在 runner 预装 SDK 上会去调
-      # cmdline-tools/16.0/bin/sdkmanager --licenses，非交互环境直接 exit 1。
-      # runner 本来就带 SDK，直接用它自带的 sdkmanager 更省事。
-      # 下面两步只在带 CEF 工具链的分支上有意义，其余分支跳过。
-      - name: 准备 Android SDK
+      # Không dùng android-actions/setup-android vì sdkmanager --licenses có thể
+      # thất bại trong môi trường không tương tác. Runner đã có Android SDK cài sẵn.
+      # Hai bước tiếp theo chỉ cần thiết với nhánh có bộ công cụ CEF; nhánh khác bỏ qua.
+      - name: Chuẩn bị Android SDK
         if: hashFiles('tools/cef_kat/logic_tests/run_logic_tests.sh') != ''
         run: |
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          [ -d "$SDK" ] || { echo "找不到 Android SDK"; exit 1; }
+          [ -d "$SDK" ] || { echo "Không tìm thấy Android SDK"; exit 1; }
           SM=""
           for c in "$SDK"/cmdline-tools/latest/bin/sdkmanager "$SDK"/cmdline-tools/*/bin/sdkmanager; do
             [ -x "$c" ] && { SM="$c"; break; }
           done
-          [ -n "$SM" ] || { echo "找不到 sdkmanager"; exit 1; }
+          [ -n "$SM" ] || { echo "Không tìm thấy sdkmanager"; exit 1; }
           echo "SDK=$SDK"; echo "sdkmanager=$SM"
-          # 非交互接受 license：sdkmanager 会读 stdin，yes 灌满即可。
+          # Chấp nhận giấy phép không tương tác.
           yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
           "$SM" --install "platforms;android-35"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
-      - name: 离线逻辑断言
+      - name: Kiểm tra logic ngoại tuyến
         if: hashFiles('tools/cef_kat/logic_tests/run_logic_tests.sh') != ''
         run: bash tools/cef_kat/logic_tests/run_logic_tests.sh
 
   build:
-    name: 双 ABI 编译 + JNI 符号
+    name: Biên dịch hai ABI và kiểm tra ký hiệu JNI
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -107,43 +105,48 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: 准备 Android SDK / NDK / CMake
+      - name: Chuẩn bị Android SDK / NDK / CMake
         run: |
           set -euo pipefail
           SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
-          [ -d "$SDK" ] || { echo "找不到 Android SDK"; exit 1; }
+          [ -d "$SDK" ] || { echo "Không tìm thấy Android SDK"; exit 1; }
           SM=""
           for c in "$SDK"/cmdline-tools/latest/bin/sdkmanager "$SDK"/cmdline-tools/*/bin/sdkmanager; do
             [ -x "$c" ] && { SM="$c"; break; }
           done
-          [ -n "$SM" ] || { echo "找不到 sdkmanager"; exit 1; }
+          [ -n "$SM" ] || { echo "Không tìm thấy sdkmanager"; exit 1; }
           yes 2>/dev/null | "$SM" --licenses >/dev/null 2>&1 || true
-          # 版本必须与 build.gradle 的 ndkVersion 一致，CMake 版本必须满足
-          # CMakeLists 的 cmake_minimum_required(3.22.1)，否则 AGP 会自己再下一份。
+          # Phiên bản NDK phải khớp ndkVersion trong build.gradle; CMake phải đáp ứng
+          # cmake_minimum_required(3.22.1) để Android Gradle Plugin không tải thêm bản khác.
           "$SM" --install "platforms;android-35" "ndk;25.1.8937393" "cmake;3.22.1"
           echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
 
       - uses: gradle/actions/setup-gradle@v4
 
-      # AudioStream.h / Settings.cpp / Deps/Bass/bass.cpp 里写的是 #include <bass.h>，
-      # 仓库里实际文件是 Bass.h。Windows 大小写不敏感，作者本地能编；Linux 编不过，
-      # 实测报 fatal error: 'bass.h' file not found。
-      # 这是上游既有的可移植性缺陷，改哪一边应该由维护者定（改 include 还是改文件名），
-      # 这里只在 CI 里建个符号链接，让 CI 能验证改动本身。
-      - name: 兼容上游的大写头文件名
+      # Một số tệp include <bass.h>, nhưng kho mã có Bass.h. Windows không phân biệt
+      # chữ hoa/thường còn Linux thì có; tạo liên kết tượng trưng trong CI để biên dịch.
+      - name: Tương thích tên tệp header viết hoa
         run: ln -sf Bass.h app/src/main/cpp/SAMPMOBILE/Deps/Bass/bass.h
 
-      # -PskipGtasaCheck=true 是作者在 build.gradle 里预留的开关，注释原文：
-      # "For compile-only dry runs without packaging a playable APK"。
-      # CI 没有 GTA:SA 专有资产，用它编译出一个结构完整、但不可玩的 APK。
-      - name: 编译 debug APK
+      # Tùy chọn này tạo APK để kiểm tra biên dịch, không đóng gói thành APK có thể chơi.
+      # CI không có các tài sản riêng của GTA:SA.
+      - name: Biên dịch APK debug
         run: ./gradlew :app:assembleDebug -PskipGtasaCheck=true --no-daemon
 
-      - name: JNI 符号导出检查
+      - name: Kiểm tra ký hiệu JNI được xuất
         if: hashFiles('tools/cef_kat/jni_symbol_check.sh') != ''
         run: bash tools/cef_kat/jni_symbol_check.sh
 
-      # 带 --require-apk：APK 必须存在，且双 ABI 的 .so 与 assets 齐全。
-      # 不带 --require-gtasa，因为 CI 不打包专有资产。
-      - name: APK 结构自检
+      # Bắt buộc APK phải tồn tại và có đủ thư viện .so hai ABI cùng assets.
+      # Không dùng --require-gtasa vì CI không đóng gói tài sản riêng của trò chơi.
+      - name: Tự kiểm tra cấu trúc APK
         run: python tools/selfcheck.py --require-apk
+
+      # Lưu APK làm tệp đính kèm (artifact) của lần chạy GitHub Actions để tải xuống.
+      - name: Tải APK lên GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: samp-mobile-debug-apk-${{ github.event.inputs.ref || github.ref_name }}
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
